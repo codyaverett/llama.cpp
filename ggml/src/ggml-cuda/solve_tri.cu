@@ -70,7 +70,7 @@ static void solve_tri_f32_cublas(ggml_backend_cuda_context & ctx,
     // Yes, this is necessary, without this we get RMSE errors
     CUBLAS_CHECK(cublasSetMathMode(ctx.cublas_handle(id), CUBLAS_DEFAULT_MATH));
     CUBLAS_CHECK(cublasStrsmBatched(ctx.cublas_handle(id), CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N,
-                                    CUBLAS_DIAG_NON_UNIT, k, n, &alpha, A_ptrs_dev, n, X_ptrs_dev, k, total_batches));
+                                    CUBLAS_DIAG_NON_UNIT, k, n, &alpha, const_cast<float * const *>(A_ptrs_dev), n, X_ptrs_dev, k, total_batches));
 
     // revert to standard mode from common.cuh
     CUBLAS_CHECK(cublasSetMathMode(ctx.cublas_handle(id), CUBLAS_TF32_TENSOR_OP_MATH));

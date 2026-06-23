@@ -51,8 +51,8 @@ if (GGML_HIP_RCCL)
     find_package(rccl REQUIRED)
 endif()
 
-if (${hip_VERSION} VERSION_LESS 6.1)
-    message(FATAL_ERROR "At least ROCM/HIP V6.1 is required")
+if (${hip_VERSION} VERSION_LESS 5.5)
+    message(FATAL_ERROR "At least ROCM/HIP V5.5 is required")
 endif()
 
 message(STATUS "HIP and hipBLAS found")
