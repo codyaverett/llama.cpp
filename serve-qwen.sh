@@ -17,10 +17,16 @@ CTX="${LLAMA_CTX:-16384}"
 # (NOT --api-key) so the secret never appears in the process list on this shared box.
 KEYFILE="${LLAMA_API_KEY_FILE:-$ROOT/.qwen-api-key}"
 
+# GPU[6] (PCIe 0000:16:00.0, HSA node-7) reliably triggers a GPU memory access fault
+# (VMFaultHandler) the moment a large per-card buffer lands on it — reproducible across
+# -fit on/off and across model loads, always node-7. Exclude it; run on the other 9.
+# Override with HIP_DEVICES / GGML_VK_VISIBLE_DEVICES if the card is repaired/replaced.
+HIP_DEVS="${HIP_DEVICES:-0,1,2,3,4,5,7,8,9}"
+
 case "$BACKEND" in
   hip)
     BIN="$ROOT/build-hip/bin/llama-server"
-    PREFIX=""
+    PREFIX="HIP_VISIBLE_DEVICES=$HIP_DEVS"
     ;;
   vulkan)
     BIN="$ROOT/build-vulkan/bin/llama-server"
@@ -48,5 +54,16 @@ if [ -n "${LLAMA_CACHE_TYPE:-}" ]; then
   CACHE="--cache-type-k $LLAMA_CACHE_TYPE --cache-type-v $LLAMA_CACHE_TYPE"
 fi
 
-echo "Starting Qwen3.6 llama-server [$BACKEND] on $HOST:$PORT (ctx=$CTX, FA on${LLAMA_CACHE_TYPE:+, kv=$LLAMA_CACHE_TYPE}), 5x Vega layer-split" >&2
-exec sg render -c "exec env $PREFIX '$BIN' -m '$MODEL' -ngl 99 -sm layer -fa on -c $CTX --host $HOST --port $PORT $AUTH $CACHE"
+# -fit off: the auto "fitting params to device memory" probe triggers a GPU memory access
+# fault (VMFaultHandler) on this 10x gfx900 rig (see the load log: "fitting params to device
+# memory ..." right before the crash-restart loop that returns 503 "Loading model"). Disabling
+# it makes the loader trust the explicit -ngl 99 -sm layer placement instead of probing.
+# --no-mmap + --no-warmup: this box has 31 GB RAM and the model is 25 GB, so with mmap the
+# kernel thrashes weight pages off the slow SATA SSD (port binds but never finishes loading).
+# --no-mmap streams tensors straight to VRAM (all layers offloaded) so host RAM never holds the
+# whole file; --no-warmup skips the full-weight warmup decode that would re-touch everything.
+# --parallel: llama.cpp splits -c across N slots, so N=4 gives each request only CTX/4 tokens.
+# Default to 4 to preserve the prior behaviour (no --parallel == 4); set LLAMA_PARALLEL to change.
+NP="${LLAMA_PARALLEL:-4}"
+echo "Starting Qwen3.6 llama-server [$BACKEND] on $HOST:$PORT (ctx=$CTX, parallel=$NP, FA on${LLAMA_CACHE_TYPE:+, kv=$LLAMA_CACHE_TYPE}), 9x Vega layer-split, no-mmap" >&2
+exec sg render -c "exec env $PREFIX '$BIN' -m '$MODEL' -ngl 99 -sm layer -fit off -fa on --no-mmap --no-warmup -c $CTX --parallel $NP --host $HOST --port $PORT $AUTH $CACHE"
