@@ -13,9 +13,10 @@ set -euo pipefail
 BACKEND="${1:-hip}"
 ROOT="/home/botuser/Projects/llama.cpp"
 MODEL="/home/botuser/Projects/models/Qwen3.6-40B-Deck-Opus-NEO-CODE-HERE-2T-OT-Q6_K.gguf"
-HOST="${LLAMA_HOST:-127.0.0.1}"
+HOST="${LLAMA_HOST:-0.0.0.0}"   # bind all interfaces so it's reachable as starbase:8090 on the LAN (API-key auth is on)
 PORT="${LLAMA_PORT:-8090}"
-CTX="${LLAMA_CTX:-8192}"
+CTX="${LLAMA_CTX:-32768}"   # 32K: ~+1.4 GB/card KV over the 9 cards; fits the 8 GB Vegas with margin.
+                            # Bigger windows crowd the cards; raise only with LLAMA_CACHE_TYPE=q8_0 KV.
 # API-key auth: if this file exists, require a Bearer token. Passed via --api-key-file
 # (NOT --api-key) so the secret never appears in the process list on this shared box.
 KEYFILE="${LLAMA_API_KEY_FILE:-$ROOT/.qwen-api-key}"
@@ -65,5 +66,9 @@ fi
 # port binds but never serves). --no-mmap streams tensors straight to VRAM (all layers are
 # offloaded) so host RAM never has to hold the whole file; --no-warmup skips the full-weight
 # warmup decode that would re-touch everything. Together they get past the RAM wall.
-echo "Starting Qwen3.6-40B Deckard llama-server [$BACKEND] on $HOST:$PORT (ctx=$CTX, FA on${LLAMA_CACHE_TYPE:+, kv=$LLAMA_CACHE_TYPE}), 9x Vega layer-split, no-mmap" >&2
-exec sg render -c "exec env $PREFIX '$BIN' -m '$MODEL' -ngl 99 -sm layer -fit off -fa on --no-mmap --no-warmup -c $CTX --host $HOST --port $PORT $AUTH $CACHE"
+# --parallel 1: llama.cpp splits the total -c across N parallel slots, so the default N=4 would
+# give each request only CTX/4 tokens. This is a single-agent backend (one session), so we want
+# the FULL context window in one slot, not four small ones. Set LLAMA_PARALLEL to override.
+NP="${LLAMA_PARALLEL:-1}"
+echo "Starting Qwen3.6-40B Deckard llama-server [$BACKEND] on $HOST:$PORT (ctx=$CTX/slot, parallel=$NP, FA on${LLAMA_CACHE_TYPE:+, kv=$LLAMA_CACHE_TYPE}), 9x Vega layer-split, no-mmap" >&2
+exec sg render -c "exec env $PREFIX '$BIN' -m '$MODEL' -ngl 99 -sm layer -fit off -fa on --no-mmap --no-warmup -c $CTX --parallel $NP --host $HOST --port $PORT $AUTH $CACHE"
