@@ -121,6 +121,27 @@ Tried `unsloth/GLM-4.5-Air-GGUF` UD-Q4_K_XL (~68 GiB, arch `glm4moe`) across all
   (no TLS) — prefer the Tailscale address over the LAN one. Host firewall (ufw) was not
   verifiable without sudo; confirm whether port 8089 is reachable from where you need it.
 
+## Serving models: use llama-fleet (2026-07-28)
+**`fleet/` is now the way to serve any model here** — see [fleet/README.md](fleet/README.md) for
+the full model catalog, profile knobs and recovery steps. One generic launcher plus a small
+profile per model replaces the seven bespoke `serve-*.sh` scripts (which still work, untouched,
+as a fallback). Swap models with `fleet/fleet.sh use <profile> && fleet/fleet.sh restart`; the
+front door stays on **:8092** so client configs never change.
+
+Two findings from building it that apply to *anything* run on this rig:
+
+1. **A second bad card: GPU[2] / HSA node-3.** Same defect as GPU[6] below — enumerates fine,
+   reports full free VRAM, loads a 5.4 GB model to completion, then faults on the **first
+   inference** (`Memory access fault ... Page not present`). Reproduced across three consecutive
+   restarts. It had previously been written off as a transient "wedged at 100% busy" card; on
+   2026-07-28 it was idle at 0% busy and still faulted. **Usable cards are 0,1,3,4,5,7,8,9.**
+2. **Concurrency ceiling is CPU cores, not GPUs.** This i3-9100 has 4 cores and each
+   `llama-server` busy-waits on GPU sync, so a serving process costs ~1 full core. Four
+   concurrent shards scale flat (7.58s → 7.88s from 1 to 4 concurrent — 4x throughput for +3%
+   latency). **Eight collapse**, and the collapse poisons ROCm driver state so that every
+   `llama-server` started afterwards ends in unkillable **D state** until a reboot. Do not run
+   more concurrent server processes than there are CPU cores; `fleet.sh` now enforces this.
+
 ## Running
 Use the wrappers (`./run-vulkan.sh`, `./run-hip.sh`) or the binaries directly.
 The running user must be in the **`render`** group (for `/dev/kfd` and the DRI render nodes).
@@ -167,6 +188,9 @@ LIBRARY_PATH=/usr/lib/x86_64-linux-gnu cmake --build build-hip -j4
 ```
 
 ## BAD CARD: GPU[6] / HSA node-7 / PCIe 0000:16:00.0 (exclude it)
+> **See also the serving section at the top: GPU[2] / HSA node-3 is a SECOND bad card with the
+> same signature, confirmed 2026-07-28. Usable cards are 0,1,3,4,5,7,8,9 — not 9 cards but 8.**
+
 One Vega (rocm-smi index **6**, PCIe bus **0x16**, KFD/HSA **node-7**, location_id 5632) reliably
 triggers a `Memory access fault by GPU node-7 ... Page not present` → `VMFaultHandler` assertion
 the moment a large (~3 GB) per-card weight buffer lands on it. Reproducible across `-fit on/off`
