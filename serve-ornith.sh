@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch llama-server for Ornith-1.0-35B (Qwen3.5 MoE, ~3B active/token; agentic coding)
 # split across the 9 usable Vega cards.
-# Usage: serve-ornith.sh [hip|vulkan] [base|aeon]   (defaults: hip, base — best for interactive chat)
+# Usage: serve-ornith.sh [hip|vulkan] [base|aeon|v15|v15-9b]   (defaults: hip, base)
 # Env overrides: LLAMA_HOST (default 127.0.0.1), LLAMA_PORT (8092), LLAMA_CTX (16384),
 #                LLAMA_ALIAS (per-variant default), LLAMA_VARIANT (base|aeon; or pass as 2nd arg)
 #
@@ -11,7 +11,13 @@
 #         finetune; the AEON repo's own weights are NVFP4 (Blackwell-only), so we use this
 #         community GGUF re-quant. Q4_K_M is the best PLAIN quant the repo ships (no Q5_K_M).
 #         The MTP quants in that repo need newer multi-token-prediction support — not used here.
-# Both are the same qwen3_5_moe arch, so they layer-split across the cards identically.
+#   v15    ornith-ai/Ornith-1.5-35B-A3B-GGUF (Q5_K_M, 23.6 GB) — the 1.5 release (2026-08-18).
+#   v15-9b ornith-ai/Ornith-1.5-9B-GGUF (Q4_K_M, 5.4 GB) — dense 9B; fits ONE card (~6.6 GB
+#          at 32K ctx), so set HIP_DEVICES=<one card> (llama-ornith15-9b.service does). For a
+#          multi-shard 9B use the fleet profile ornith15-9b instead.
+# All 35B variants are the same qwen3_5_moe arch, so they layer-split across the cards identically.
+# The 1.5 models are REASONING models with an adjusted chat template: the v15* cases add
+# --jinja --reasoning-format auto plus the model card's sampling defaults via V15_FLAGS.
 #
 # Runs the server inside the 'render' group via sg, so it can reach /dev/kfd and the DRI
 # render nodes even when the caller (e.g. the systemd --user manager) lacks that group.
@@ -26,10 +32,15 @@ CTX="${LLAMA_CTX:-16384}"   # Ornith supports 256K; raise with LLAMA_CACHE_TYPE=
 # Variant select: 2nd positional arg wins, else LLAMA_VARIANT, else "base". Sets MODEL + the
 # default served-model id (ALIAS), so base and aeon expose distinct ids on /v1/models.
 VARIANT="${2:-${LLAMA_VARIANT:-base}}"
+V15_FLAGS=""
 case "$VARIANT" in
-  base) MODEL="/home/botuser/Projects/models/ornith-1.0-35b-Q5_K_M.gguf";    DEF_ALIAS="ornith" ;;
-  aeon) MODEL="/home/botuser/Projects/models/ornith-aeon-35b-Q4_K_M.gguf";   DEF_ALIAS="ornith-aeon" ;;
-  *)    echo "unknown variant '$VARIANT' (use: base | aeon)" >&2; exit 2 ;;
+  base)   MODEL="/home/botuser/Projects/models/ornith-1.0-35b-Q5_K_M.gguf";    DEF_ALIAS="ornith" ;;
+  aeon)   MODEL="/home/botuser/Projects/models/ornith-aeon-35b-Q4_K_M.gguf";   DEF_ALIAS="ornith-aeon" ;;
+  v15)    MODEL="/home/botuser/Projects/models/ornith-1.5-35b-Q5_K_M.gguf";    DEF_ALIAS="ornith15-35b"
+          V15_FLAGS="--jinja --reasoning-format auto --temp 0.6 --top-p 0.95 --top-k 20" ;;
+  v15-9b) MODEL="/home/botuser/Projects/models/ornith-1.5-9b-Q4_K_M.gguf";     DEF_ALIAS="ornith15-9b"
+          V15_FLAGS="--jinja --reasoning-format auto --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 1.5" ;;
+  *)      echo "unknown variant '$VARIANT' (use: base | aeon | v15 | v15-9b)" >&2; exit 2 ;;
 esac
 # Served model id exposed via /v1/models. Cline/OpenAI clients use this as the "Model ID".
 ALIAS="${LLAMA_ALIAS:-$DEF_ALIAS}"
@@ -90,5 +101,5 @@ fi
 # --parallel: llama.cpp splits -c across N slots, so N=4 gives each request only CTX/4 tokens.
 # Default to 4 for this multi-client MoE backend; set LLAMA_PARALLEL=1 for full ctx in one slot.
 NP="${LLAMA_PARALLEL:-4}"
-echo "Starting Ornith-1.0-35B [$VARIANT] llama-server [$BACKEND] on $HOST:$PORT (alias=$ALIAS, ctx=$CTX, parallel=$NP, FA on${LLAMA_CACHE_TYPE:+, kv=$LLAMA_CACHE_TYPE}), 9x Vega layer-split, no-mmap" >&2
-exec sg render -c "exec env $PREFIX '$BIN' -m '$MODEL' --alias '$ALIAS' -ngl 99 -sm layer -fit off -fa on --no-mmap --no-warmup -c $CTX --parallel $NP --host $HOST --port $PORT $AUTH $CACHE"
+echo "Starting Ornith [$VARIANT] llama-server [$BACKEND] on $HOST:$PORT (alias=$ALIAS, ctx=$CTX, parallel=$NP, FA on${LLAMA_CACHE_TYPE:+, kv=$LLAMA_CACHE_TYPE}), 9x Vega layer-split, no-mmap" >&2
+exec sg render -c "exec env $PREFIX '$BIN' -m '$MODEL' --alias '$ALIAS' -ngl 99 -sm layer -fit off -fa on --no-mmap --no-warmup -c $CTX --parallel $NP --host $HOST --port $PORT $AUTH $CACHE $V15_FLAGS"

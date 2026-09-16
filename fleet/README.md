@@ -72,6 +72,8 @@ against the other failure mode (card wedged at 100% busy, model load hangs forev
 | `deepseek-coder-lite` | DeepSeek-Coder-V2-Lite Q5_K_M | 11302 MiB | 16B/2.4B MoE | 2 | 4 | 16384 | untested as fleet |
 | `gemma-agentic-fable5` | Gemma-4 12B agentic tau2 Q8_0 | 12082 MiB | 12B dense, tool-calling | 2 | 4 | 16384 | untested as fleet |
 | `gemma-coder-heretic` | Gemma-4 12B uncensored Q8_0 | 12082 MiB | 12B dense | 2 | 4 | 32768 | untested as fleet |
+| `ornith15-9b` | Ornith-1.5-9B Q4_K_M | 5390 MiB | dense hybrid `qwen35`, reasoning | 1 | 4 | 32768 | **verified** 2026-09-15 as 4 shards alongside `llama-ornith15-35b.service` on the other 4 cards |
+| `ornith15-35b` | Ornith-1.5-35B-A3B Q5_K_M | 24137 MiB | `qwen35moe`, ~3B active, reasoning | 7 | 1 | 65536 | verified 2026-09-15 on 7 cards; the standing layout is `llama-ornith15-35b.service` (4 cards, :8097) next to the 9B fleet |
 | `ornith-35b` | Ornith-1.0-35B Q5_K_M | 23583 MiB | `qwen35moe`, ~3B active | 8 | 1 | 131072 | as before |
 | `ornith-aeon-35b` | Ornith-1.0-35B AEON uncensored Q4_K_M | 20186 MiB | `qwen35moe`, ~3B active | 8 | 1 | 131072 | as before |
 | `qwen-35b` | Qwen3.6-35B-A3B UD-Q5_K_M | 25230 MiB | MoE, ~3B active | 8 | 1 | 16384 | as before |
